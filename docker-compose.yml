@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nivor-app-18
+    restart: unless-stopped
+    ports:
+      - "4006:4006"
+    volumes:
+      - ./brain_edumath.db:/app/brain_edumath.db
+      - ./static/uploads:/app/static/uploads
+      - ./backups:/app/backups

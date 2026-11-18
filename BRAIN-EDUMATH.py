@@ -1,18 +1,23 @@
 import os
+from typing import Optional, List
 from flask import Flask, redirect, render_template_string, request, url_for, session, flash, send_file, get_flashed_messages
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from functools import wraps
 from datetime import datetime
 import json
-import random
 import re
+import uuid
 
 # ==========================================
 # 1. KONFIGURASI SERVER & APP (ABSOLUTE PATH)
 # ==========================================
+class Base(DeclarativeBase):
+    pass
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'brain-edumath-super-secret-key-2026'
 
@@ -27,81 +32,86 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 BACKUP_FOLDER = os.path.join(basedir, 'backups')
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
-db = SQLAlchemy(app)
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+
+def allowed_file(filename: Optional[str]) -> bool:
+    return bool(filename and '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS)
+
+db = SQLAlchemy(app, model_class=Base)
 
 # ==========================================
-# 2. DATABASE MODELS
+# 2. DATABASE MODELS (SQLALCHEMY 2.0 TYPED)
 # ==========================================
 class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(150), unique=True, nullable=False)
-    password = db.Column(db.String(150), nullable=False)
-    nama = db.Column(db.String(150), nullable=False)
-    role = db.Column(db.String(50), default='siswa')
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(db.String(150), unique=True, nullable=False)
+    password: Mapped[str] = mapped_column(db.String(150), nullable=False)
+    nama: Mapped[str] = mapped_column(db.String(150), nullable=False)
+    role: Mapped[str] = mapped_column(db.String(50), default='siswa')
 
 class MateriSoal(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    judul = db.Column(db.String(100), nullable=False)
-    status = db.Column(db.String(20), default='buka')
-    waktu_mulai = db.Column(db.String(50), nullable=True)
-    waktu_selesai = db.Column(db.String(50), nullable=True)
-    durasi_menit = db.Column(db.Integer, default=60)
-    soals = db.relationship('SoalDetail', backref='materi', lazy=True, cascade="all, delete-orphan")
+    id: Mapped[int] = mapped_column(primary_key=True)
+    judul: Mapped[str] = mapped_column(db.String(100), nullable=False)
+    status: Mapped[str] = mapped_column(db.String(20), default='buka')
+    waktu_mulai: Mapped[Optional[str]] = mapped_column(db.String(50), nullable=True)
+    waktu_selesai: Mapped[Optional[str]] = mapped_column(db.String(50), nullable=True)
+    durasi_menit: Mapped[int] = mapped_column(db.Integer, default=60)
+    soals: Mapped[List["SoalDetail"]] = relationship('SoalDetail', backref='materi', lazy=True, cascade="all, delete-orphan")
 
 class SoalDetail(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    materi_id = db.Column(db.Integer, db.ForeignKey('materi_soal.id'), nullable=False)
-    tipe = db.Column(db.String(20), nullable=False, default='pg')
-    pertanyaan = db.Column(db.Text, nullable=False)
-    foto = db.Column(db.String(255), nullable=True)
-    pilihan_a = db.Column(db.Text)
-    pilihan_b = db.Column(db.Text)
-    pilihan_c = db.Column(db.Text)
-    pilihan_d = db.Column(db.Text)
-    kunci_jawaban = db.Column(db.Text, nullable=False)
-    keyword_jawaban = db.Column(db.Text, nullable=True)
-    pembahasan = db.Column(db.Text, nullable=True)
-    poin_soal = db.Column(db.Float, default=10.0)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    materi_id: Mapped[int] = mapped_column(db.ForeignKey('materi_soal.id'), nullable=False)
+    tipe: Mapped[str] = mapped_column(db.String(20), nullable=False, default='pg')
+    pertanyaan: Mapped[str] = mapped_column(db.Text, nullable=False)
+    foto: Mapped[Optional[str]] = mapped_column(db.String(255), nullable=True)
+    pilihan_a: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    pilihan_b: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    pilihan_c: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    pilihan_d: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    kunci_jawaban: Mapped[str] = mapped_column(db.Text, nullable=False)
+    keyword_jawaban: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    pembahasan: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    poin_soal: Mapped[float] = mapped_column(db.Float, default=10.0)
 
 class JawabanSiswa(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    materi_id = db.Column(db.Integer, db.ForeignKey('materi_soal.id'), nullable=False)
-    soal_id = db.Column(db.Integer, db.ForeignKey('soal_detail.id'), nullable=False)
-    jawaban_teks = db.Column(db.Text, nullable=True)
-    lampiran_file = db.Column(db.String(255), nullable=True)
-    status_koreksi = db.Column(db.String(20), default='Menunggu Koreksi')
-    nilai_diperoleh = db.Column(db.Float, default=0.0)
-    feedback_guru = db.Column(db.Text, nullable=True)
-    sanggahan_siswa = db.Column(db.Text, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(db.ForeignKey('user.id'), nullable=False)
+    materi_id: Mapped[int] = mapped_column(db.ForeignKey('materi_soal.id'), nullable=False)
+    soal_id: Mapped[int] = mapped_column(db.ForeignKey('soal_detail.id'), nullable=False)
+    jawaban_teks: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    lampiran_file: Mapped[Optional[str]] = mapped_column(db.String(255), nullable=True)
+    status_koreksi: Mapped[str] = mapped_column(db.String(20), default='Menunggu Koreksi')
+    nilai_diperoleh: Mapped[float] = mapped_column(db.Float, default=0.0)
+    feedback_guru: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
+    sanggahan_siswa: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
 
 class VocabCategory(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    vocabs = db.relationship('Vocab', backref='category', lazy=True, cascade="all, delete-orphan")
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(db.String(100), nullable=False)
+    vocabs: Mapped[List["Vocab"]] = relationship('Vocab', backref='category', lazy=True, cascade="all, delete-orphan")
 
 class Vocab(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    category_id = db.Column(db.Integer, db.ForeignKey('vocab_category.id'), nullable=False)
-    term_en = db.Column(db.String(100), nullable=False)
-    term_id = db.Column(db.String(100), nullable=False)
-    definition = db.Column(db.Text, nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    category_id: Mapped[int] = mapped_column(db.ForeignKey('vocab_category.id'), nullable=False)
+    term_en: Mapped[str] = mapped_column(db.String(100), nullable=False)
+    term_id: Mapped[str] = mapped_column(db.String(100), nullable=False)
+    definition: Mapped[str] = mapped_column(db.Text, nullable=False)
 
 class RiwayatPengerjaan(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    materi_id = db.Column(db.Integer, db.ForeignKey('materi_soal.id'), nullable=False)
-    skor_tertinggi = db.Column(db.Float, nullable=False, default=0.0)
-    status_ujian = db.Column(db.String(30), default='Selesai Dikerjakan')
-    terakhir_dikerjakan = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(db.ForeignKey('user.id'), nullable=False)
+    materi_id: Mapped[int] = mapped_column(db.ForeignKey('materi_soal.id'), nullable=False)
+    skor_tertinggi: Mapped[float] = mapped_column(db.Float, nullable=False, default=0.0)
+    status_ujian: Mapped[str] = mapped_column(db.String(30), default='Selesai Dikerjakan')
+    terakhir_dikerjakan: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
 class KartuSoalUlarTangga(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    warna = db.Column(db.String(20), nullable=False)
-    tipe_soal = db.Column(db.String(20), default='angka')
-    pertanyaan = db.Column(db.Text, nullable=False)
-    jawaban = db.Column(db.String(255), nullable=False)
-    keyword_jawaban = db.Column(db.Text, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    warna: Mapped[str] = mapped_column(db.String(20), nullable=False)
+    tipe_soal: Mapped[str] = mapped_column(db.String(20), default='angka')
+    pertanyaan: Mapped[str] = mapped_column(db.Text, nullable=False)
+    jawaban: Mapped[str] = mapped_column(db.String(255), nullable=False)
+    keyword_jawaban: Mapped[Optional[str]] = mapped_column(db.Text, nullable=True)
 
 # ==========================================
 # 3. INISIALISASI DATA AWAL & MIGRASI OTOMATIS
@@ -183,7 +193,7 @@ def admin_required(f):
 # ==========================================
 # 5. RENDER LAYOUT UTAMA (GLOBAL STYLING)
 # ==========================================
-def render_page(title, body_content):
+def render_page(title: str, body_content: str) -> str:
     html_template = """
     <!DOCTYPE html>
     <html lang="id">
@@ -303,12 +313,11 @@ def render_page(title, body_content):
         """
         
     flash_html = ""
-    with app.test_request_context():
-        messages = get_flashed_messages(with_categories=True)
-        for cat, msg in messages:
-            flash_html += f'<div class="alert alert-{cat}"><i class="fas fa-info-circle fa-lg"></i> <span>{msg}</span></div>'
+    messages = get_flashed_messages(with_categories=True)
+    for cat, msg in messages:
+        flash_html += f'<div class="alert alert-{cat}"><i class="fas fa-info-circle fa-lg"></i> <span>{msg}</span></div>'
 
-    rendered = html_template.format(
+    return html_template.format(
         title=title,
         url_dashboard=url_dash,
         url_bank=url_b,
@@ -320,7 +329,6 @@ def render_page(title, body_content):
         flash_messages=flash_html,
         body_content=body_content
     )
-    return rendered
 
 # ==========================================
 # 6. ROUTING APLIKASI
@@ -332,8 +340,10 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        user = User.query.filter_by(username=request.form.get('username')).first()
-        if user and check_password_hash(user.password, request.form.get('password')):
+        username_input = request.form.get('username', '').strip()
+        password_input = request.form.get('password', '')
+        user = User.query.filter_by(username=username_input).first()
+        if user and check_password_hash(user.password, password_input):
             session['user_id'] = user.id
             session['nama'] = user.nama
             session['role'] = user.role
@@ -427,11 +437,11 @@ def dashboard():
 @admin_required
 def manajemen_siswa():
     if request.method == 'POST':
-        action = request.form.get('action')
+        action = request.form.get('action', '')
         if action == 'add':
-            username = request.form.get('username').strip()
-            nama = request.form.get('nama').strip()
-            password = request.form.get('password').strip()
+            username = request.form.get('username', '').strip()
+            nama = request.form.get('nama', '').strip()
+            password = request.form.get('password', '').strip()
             
             if User.query.filter_by(username=username).first():
                 flash(f'Username "{username}" sudah terdaftar!', 'danger')
@@ -443,9 +453,9 @@ def manajemen_siswa():
             user_id = request.form.get('user_id')
             siswa = User.query.get(user_id)
             if siswa and siswa.role == 'siswa':
-                siswa.nama = request.form.get('nama').strip()
-                siswa.username = request.form.get('username').strip()
-                new_pass = request.form.get('password').strip()
+                siswa.nama = request.form.get('nama', '').strip()
+                siswa.username = request.form.get('username', '').strip()
+                new_pass = request.form.get('password', '').strip()
                 if new_pass:
                     siswa.password = generate_password_hash(new_pass)
                 db.session.commit()
@@ -495,7 +505,8 @@ def manajemen_siswa():
         </dialog>
         """
         
-    if not siswa_rows: siswa_rows = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted); padding:30px;">Belum ada akun siswa terdaftar.</td></tr>'
+    if not siswa_rows:
+        siswa_rows = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted); padding:30px;">Belum ada akun siswa terdaftar.</td></tr>'
 
     content = f"""
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
@@ -540,23 +551,23 @@ def manajemen_siswa():
 @admin_required
 def kelola_kartu_ular_tangga():
     if request.method == 'POST':
-        action = request.form.get('action')
+        action = request.form.get('action', '')
         if action == 'add':
             db.session.add(KartuSoalUlarTangga(
-                warna=request.form.get('warna'),
-                tipe_soal=request.form.get('tipe_soal'),
-                pertanyaan=request.form.get('pertanyaan').strip(),
-                jawaban=request.form.get('jawaban').strip(),
+                warna=request.form.get('warna', 'hijau'),
+                tipe_soal=request.form.get('tipe_soal', 'angka'),
+                pertanyaan=request.form.get('pertanyaan', '').strip(),
+                jawaban=request.form.get('jawaban', '').strip(),
                 keyword_jawaban=request.form.get('keyword_jawaban', '').strip()
             ))
             flash('Kartu Soal Ular Tangga berhasil ditambahkan!', 'success')
         elif action == 'edit':
             kartu = KartuSoalUlarTangga.query.get(request.form.get('kartu_id'))
             if kartu:
-                kartu.warna = request.form.get('warna')
-                kartu.tipe_soal = request.form.get('tipe_soal')
-                kartu.pertanyaan = request.form.get('pertanyaan').strip()
-                kartu.jawaban = request.form.get('jawaban').strip()
+                kartu.warna = request.form.get('warna', 'hijau')
+                kartu.tipe_soal = request.form.get('tipe_soal', 'angka')
+                kartu.pertanyaan = request.form.get('pertanyaan', '').strip()
+                kartu.jawaban = request.form.get('jawaban', '').strip()
                 kartu.keyword_jawaban = request.form.get('keyword_jawaban', '').strip()
                 flash('Kartu Soal berhasil diperbarui!', 'success')
         elif action == 'delete':
@@ -634,7 +645,8 @@ def kelola_kartu_ular_tangga():
         </dialog>
         """
         
-    if not rows: rows = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:30px;">Belum ada kartu soal ular tangga.</td></tr>'
+    if not rows:
+        rows = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:30px;">Belum ada kartu soal ular tangga.</td></tr>'
 
     content = f"""
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
@@ -704,28 +716,29 @@ def kelola_kartu_ular_tangga():
 @login_required
 def bank_soal():
     if request.method == 'POST' and session.get('role') == 'admin':
-        action = request.form.get('action')
+        action = request.form.get('action', '')
         if action == 'add':
             db.session.add(MateriSoal(
-                judul=request.form.get('judul'),
-                status=request.form.get('status'),
-                waktu_mulai=request.form.get('waktu_mulai'),
-                waktu_selesai=request.form.get('waktu_selesai'),
+                judul=request.form.get('judul', 'Materi Baru').strip(),
+                status=request.form.get('status', 'buka'),
+                waktu_mulai=request.form.get('waktu_mulai') or None,
+                waktu_selesai=request.form.get('waktu_selesai') or None,
                 durasi_menit=int(request.form.get('durasi_menit') or 60)
             ))
             flash('Materi dan Bank Soal baru berhasil ditambahkan!', 'success')
         elif action == 'edit':
             m = MateriSoal.query.get(request.form.get('id'))
             if m:
-                m.judul = request.form.get('judul')
-                m.status = request.form.get('status')
-                m.waktu_mulai = request.form.get('waktu_mulai')
-                m.waktu_selesai = request.form.get('waktu_selesai')
+                m.judul = request.form.get('judul', m.judul).strip()
+                m.status = request.form.get('status', 'buka')
+                m.waktu_mulai = request.form.get('waktu_mulai') or None
+                m.waktu_selesai = request.form.get('waktu_selesai') or None
                 m.durasi_menit = int(request.form.get('durasi_menit') or 60)
                 flash('Pengaturan ujian berhasil diperbarui!', 'success')
         elif action == 'delete':
             m = MateriSoal.query.get(request.form.get('id'))
-            if m: db.session.delete(m)
+            if m:
+                db.session.delete(m)
             flash('Materi ujian dihapus!', 'success')
         db.session.commit()
         return redirect(url_for('bank_soal'))
@@ -761,9 +774,11 @@ def bank_soal():
                 can_start = True
                 reason = ""
                 if m.waktu_mulai and now_str < m.waktu_mulai.replace('T', ' '):
-                    can_start = False; reason = f"Mulai: {m.waktu_mulai.replace('T', ' ')}"
+                    can_start = False
+                    reason = f"Mulai: {m.waktu_mulai.replace('T', ' ')}"
                 if m.waktu_selesai and now_str > m.waktu_selesai.replace('T', ' '):
-                    can_start = False; reason = "Waktu Berakhir"
+                    can_start = False
+                    reason = "Waktu Berakhir"
                 
                 if not can_start:
                     status_badge = f'<span style="color:var(--warning); font-size:0.85rem; font-weight:700;"><i class="fas fa-clock"></i> {reason}</span>'
@@ -821,7 +836,8 @@ def bank_soal():
         </div>
         """
         
-    if not cards_html: cards_html = "<div class='card' style='text-align:center; color:var(--text-muted); padding:40px;'><p>Belum ada materi soal atau ujian yang aktif.</p></div>"
+    if not cards_html:
+        cards_html = "<div class='card' style='text-align:center; color:var(--text-muted); padding:40px;'><p>Belum ada materi soal atau ujian yang aktif.</p></div>"
 
     if session.get('role') == 'admin':
         add_form_html = f"""
@@ -916,7 +932,7 @@ def ekspor_bank_soal(materi_id):
 @admin_required
 def impor_bank_soal():
     file_json = request.files.get('file_json')
-    if not file_json or file_json.filename == '':
+    if not file_json or not file_json.filename:
         flash('File JSON tidak valid atau tidak dipilih!', 'danger')
         return redirect(url_for('bank_soal'))
         
@@ -929,7 +945,7 @@ def impor_bank_soal():
             status=data.get('status', 'buka'),
             waktu_mulai=data.get('waktu_mulai'),
             waktu_selesai=data.get('waktu_selesai'),
-            durasi_menit=data.get('durasi_menit', 60)
+            durasi_menit=int(data.get('durasi_menit', 60))
         )
         db.session.add(m_baru)
         db.session.commit()
@@ -947,7 +963,7 @@ def impor_bank_soal():
                 kunci_jawaban=s_data.get('kunci_jawaban', ''),
                 keyword_jawaban=s_data.get('keyword_jawaban'),
                 pembahasan=s_data.get('pembahasan'),
-                poin_soal=s_data.get('poin_soal', 10.0)
+                poin_soal=float(s_data.get('poin_soal', 10.0))
             ))
         db.session.commit()
         flash('Bank soal beserta seluruh butir soal berhasil diimpor dari file JSON!', 'success')
@@ -962,20 +978,29 @@ def impor_bank_soal():
 def kelola_soal(materi_id):
     materi = MateriSoal.query.get_or_404(materi_id)
     if request.method == 'POST':
-        action = request.form.get('action')
+        action = request.form.get('action', '')
         foto_file = request.files.get('foto')
-        filename = None
-        if foto_file and foto_file.filename != '':
-            filename = secure_filename(foto_file.filename)
-            foto_file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        filename: Optional[str] = None
+        if foto_file and foto_file.filename:
+            if allowed_file(foto_file.filename):
+                safe_name = secure_filename(foto_file.filename)
+                filename = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+                foto_file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+            else:
+                flash('Format gambar tidak didukung (gunakan PNG/JPG/WEBP).', 'danger')
+                return redirect(url_for('kelola_soal', materi_id=materi.id))
 
         if action == 'add':
             db.session.add(SoalDetail(
-                materi_id=materi.id, tipe=request.form.get('tipe'),
-                pertanyaan=request.form.get('pertanyaan'), foto=filename,
-                pilihan_a=request.form.get('pilihan_a'), pilihan_b=request.form.get('pilihan_b'),
-                pilihan_c=request.form.get('pilihan_c'), pilihan_d=request.form.get('pilihan_d'),
-                kunci_jawaban=request.form.get('kunci_jawaban').strip(),
+                materi_id=materi.id,
+                tipe=request.form.get('tipe', 'pg'),
+                pertanyaan=request.form.get('pertanyaan', '').strip(),
+                foto=filename,
+                pilihan_a=request.form.get('pilihan_a'),
+                pilihan_b=request.form.get('pilihan_b'),
+                pilihan_c=request.form.get('pilihan_c'),
+                pilihan_d=request.form.get('pilihan_d'),
+                kunci_jawaban=request.form.get('kunci_jawaban', '').strip(),
                 keyword_jawaban=request.form.get('keyword_jawaban', '').strip(),
                 pembahasan=request.form.get('pembahasan', '').strip(),
                 poin_soal=float(request.form.get('poin_soal') or 10.0)
@@ -984,21 +1009,23 @@ def kelola_soal(materi_id):
         elif action == 'edit':
             s = SoalDetail.query.get(request.form.get('soal_id'))
             if s:
-                s.tipe = request.form.get('tipe')
-                s.pertanyaan = request.form.get('pertanyaan')
-                if filename: s.foto = filename
+                s.tipe = request.form.get('tipe', 'pg')
+                s.pertanyaan = request.form.get('pertanyaan', '').strip()
+                if filename:
+                    s.foto = filename
                 s.pilihan_a = request.form.get('pilihan_a')
                 s.pilihan_b = request.form.get('pilihan_b')
                 s.pilihan_c = request.form.get('pilihan_c')
                 s.pilihan_d = request.form.get('pilihan_d')
-                s.kunci_jawaban = request.form.get('kunci_jawaban').strip()
+                s.kunci_jawaban = request.form.get('kunci_jawaban', '').strip()
                 s.keyword_jawaban = request.form.get('keyword_jawaban', '').strip()
                 s.pembahasan = request.form.get('pembahasan', '').strip()
                 s.poin_soal = float(request.form.get('poin_soal') or 10.0)
                 flash('Soal berhasil diperbarui!', 'success')
         elif action == 'delete':
             s = SoalDetail.query.get(request.form.get('soal_id'))
-            if s: db.session.delete(s)
+            if s:
+                db.session.delete(s)
             flash('Soal berhasil dihapus!', 'success')
         db.session.commit()
         return redirect(url_for('kelola_soal', materi_id=materi.id))
@@ -1009,10 +1036,10 @@ def kelola_soal(materi_id):
         if s.tipe == 'pg':
             pg_details = f"""
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin: 18px 0;">
-                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>A.</b> {s.pilihan_a}</div>
-                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>B.</b> {s.pilihan_b}</div>
-                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>C.</b> {s.pilihan_c}</div>
-                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>D.</b> {s.pilihan_d}</div>
+                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>A.</b> {s.pilihan_a or ''}</div>
+                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>B.</b> {s.pilihan_b or ''}</div>
+                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>C.</b> {s.pilihan_c or ''}</div>
+                <div style="background:#f8fafc; padding:14px; border-radius:12px; border:1px solid #e2e8f0;"><b>D.</b> {s.pilihan_d or ''}</div>
             </div>
             """
         
@@ -1153,6 +1180,10 @@ def kuis_mulai(materi_id):
         return redirect(url_for('bank_soal'))
         
     soal_ids = [s.id for s in materi.soals]
+    if not soal_ids:
+        flash('Ujian ini belum memiliki butir soal.', 'warning')
+        return redirect(url_for('bank_soal'))
+
     session['kuis'] = {
         'materi_id': materi_id, 
         'soal_ids': soal_ids, 
@@ -1166,14 +1197,19 @@ def kuis_mulai(materi_id):
 @login_required
 def kuis_soal(idx):
     kuis_state = session.get('kuis')
-    if not kuis_state: return redirect(url_for('bank_soal'))
+    if not kuis_state:
+        return redirect(url_for('bank_soal'))
     
     soal_ids = kuis_state['soal_ids']
-    if idx < 0 or idx >= len(soal_ids): return redirect(url_for('kuis_konfirmasi'))
+    if idx < 0 or idx >= len(soal_ids):
+        return redirect(url_for('kuis_konfirmasi'))
     
     kuis_state['current_idx'] = idx
     session.modified = True
     soal = SoalDetail.query.get(soal_ids[idx])
+    if not soal:
+        flash('Butir soal tidak ditemukan.', 'danger')
+        return redirect(url_for('bank_soal'))
 
     if request.method == 'POST':
         jawaban_user = request.form.get('jawaban', '').strip()
@@ -1181,11 +1217,17 @@ def kuis_soal(idx):
         lampiran_file = request.files.get('lampiran_file')
         lampiran_filename = kuis_state.get('lampiran_sementara', {}).get(str(soal.id))
         
-        if lampiran_file and lampiran_file.filename != '':
-            lampiran_filename = secure_filename(f"user_{session['user_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{lampiran_file.filename}")
-            lampiran_file.save(os.path.join(app.config['UPLOAD_FOLDER'], lampiran_filename))
-            if 'lampiran_sementara' not in kuis_state: kuis_state['lampiran_sementara'] = {}
-            kuis_state['lampiran_sementara'][str(soal.id)] = lampiran_filename
+        if lampiran_file and lampiran_file.filename:
+            if allowed_file(lampiran_file.filename):
+                safe_name = secure_filename(lampiran_file.filename)
+                lampiran_filename = f"user_{session['user_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{safe_name}"
+                lampiran_file.save(os.path.join(app.config['UPLOAD_FOLDER'], lampiran_filename))
+                if 'lampiran_sementara' not in kuis_state:
+                    kuis_state['lampiran_sementara'] = {}
+                kuis_state['lampiran_sementara'][str(soal.id)] = lampiran_filename
+            else:
+                flash('Format file lampiran harus berupa gambar (PNG/JPG/WEBP).', 'danger')
+                return redirect(url_for('kuis_soal', idx=idx))
 
         kuis_state['jawaban_sementara'][str(soal.id)] = jawaban_user
         session.modified = True
@@ -1225,16 +1267,16 @@ def kuis_soal(idx):
     if soal.tipe == 'pg':
         input_html = f"""
         <label style="display:flex; gap:16px; align-items:center; padding:18px; border:2px solid var(--border-color); border-radius:14px; margin-bottom:14px; cursor:pointer; background:#f8fafc; transition:all 0.2s;">
-            <input type="radio" name="jawaban" value="A" {'checked' if saved_ans=='A' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>A.</b> {soal.pilihan_a}</span>
+            <input type="radio" name="jawaban" value="A" {'checked' if saved_ans=='A' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>A.</b> {soal.pilihan_a or ''}</span>
         </label>
         <label style="display:flex; gap:16px; align-items:center; padding:18px; border:2px solid var(--border-color); border-radius:14px; margin-bottom:14px; cursor:pointer; background:#f8fafc; transition:all 0.2s;">
-            <input type="radio" name="jawaban" value="B" {'checked' if saved_ans=='B' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>B.</b> {soal.pilihan_b}</span>
+            <input type="radio" name="jawaban" value="B" {'checked' if saved_ans=='B' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>B.</b> {soal.pilihan_b or ''}</span>
         </label>
         <label style="display:flex; gap:16px; align-items:center; padding:18px; border:2px solid var(--border-color); border-radius:14px; margin-bottom:14px; cursor:pointer; background:#f8fafc; transition:all 0.2s;">
-            <input type="radio" name="jawaban" value="C" {'checked' if saved_ans=='C' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>C.</b> {soal.pilihan_c}</span>
+            <input type="radio" name="jawaban" value="C" {'checked' if saved_ans=='C' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>C.</b> {soal.pilihan_c or ''}</span>
         </label>
         <label style="display:flex; gap:16px; align-items:center; padding:18px; border:2px solid var(--border-color); border-radius:14px; margin-bottom:14px; cursor:pointer; background:#f8fafc; transition:all 0.2s;">
-            <input type="radio" name="jawaban" value="D" {'checked' if saved_ans=='D' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>D.</b> {soal.pilihan_d}</span>
+            <input type="radio" name="jawaban" value="D" {'checked' if saved_ans=='D' else ''} style="width:20px; height:20px;"> <span style="font-size:1.05rem;"><b>D.</b> {soal.pilihan_d or ''}</span>
         </label>
         {file_upload_section}
         """
@@ -1322,7 +1364,8 @@ def kuis_soal(idx):
 @login_required
 def kuis_konfirmasi():
     kuis_state = session.get('kuis')
-    if not kuis_state: return redirect(url_for('bank_soal'))
+    if not kuis_state:
+        return redirect(url_for('bank_soal'))
     
     materi = MateriSoal.query.get_or_404(kuis_state['materi_id'])
     soal_ids = kuis_state['soal_ids']
@@ -1333,6 +1376,9 @@ def kuis_konfirmasi():
         for sid_str, jwb in kuis_state['jawaban_sementara'].items():
             sid = int(sid_str)
             soal_obj = SoalDetail.query.get(sid)
+            if not soal_obj:
+                continue
+
             lampiran_file = kuis_state.get('lampiran_sementara', {}).get(sid_str)
             
             poin_diberikan = 0.0
@@ -1370,7 +1416,7 @@ def kuis_konfirmasi():
                     kunci_words = [w.strip(".,;()[]{}'\":?!") for w in kunci_clean.split() if len(w) > 1]
                     
                     for kw in all_keywords:
-                        if kw in jwb_clean:
+                        if re.search(rf'\b{re.escape(kw)}\b', jwb_clean):
                             matched = True
                             break
                     
@@ -1398,7 +1444,8 @@ def kuis_konfirmasi():
             js = JawabanSiswa.query.filter_by(user_id=session['user_id'], materi_id=materi.id, soal_id=sid).first()
             if js:
                 js.jawaban_teks = jwb
-                if lampiran_file: js.lampiran_file = lampiran_file
+                if lampiran_file:
+                    js.lampiran_file = lampiran_file
                 js.nilai_diperoleh = poin_diberikan
                 js.status_koreksi = status_kor
             else:
@@ -1427,7 +1474,8 @@ def kuis_konfirmasi():
     terjawab_count = 0
     for i, sid in enumerate(soal_ids):
         ans = kuis_state['jawaban_sementara'].get(str(sid), '').strip()
-        if ans: terjawab_count += 1
+        if ans:
+            terjawab_count += 1
         
         status_badge = '<span style="color:var(--success); font-weight:700;"><i class="fas fa-check-circle"></i> Terjawab</span>' if ans else '<span style="color:var(--danger); font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Belum (Kosong)</span>'
         preview_ans = ans if ans else '(Belum diisi)'
@@ -1508,7 +1556,7 @@ def kuis_hasil_sementara(materi_id):
 
     for idx, soal in enumerate(materi.soals, 1):
         js = jwb_dict.get(soal.id)
-        jwb_user = js.jawaban_teks if js else '(Tidak dijawab)'
+        jwb_user = js.jawaban_teks if js and js.jawaban_teks else '(Tidak dijawab)'
         poin = js.nilai_diperoleh if js else 0.0
         feedback_guru = js.feedback_guru if js and js.feedback_guru else 'Belum ada catatan dari guru.'
         sanggahan_val = js.sanggahan_siswa if js and js.sanggahan_siswa else ''
@@ -1626,7 +1674,8 @@ def koreksi_detail(materi_id):
     siswa_list_html = ""
     for sw in siswas:
         jsw_count = JawabanSiswa.query.filter_by(user_id=sw.id, materi_id=materi.id).count()
-        if jsw_count == 0: continue
+        if jsw_count == 0:
+            continue
             
         riwayat_siswa = RiwayatPengerjaan.query.filter_by(user_id=sw.id, materi_id=materi.id).first()
         status_teks = riwayat_siswa.status_ujian if riwayat_siswa else 'Selesai Dikerjakan'
@@ -1701,7 +1750,7 @@ def koreksi_siswa_detail(materi_id, user_id):
         j = jwb_dict.get(soal_obj.id)
         poin_val = j.nilai_diperoleh if j and j.nilai_diperoleh is not None else 0.0
         total_initial_score += poin_val
-        jwb_teks = j.jawaban_teks if j else '(Tidak dijawab)'
+        jwb_teks = j.jawaban_teks if j and j.jawaban_teks else '(Tidak dijawab)'
         feedback_val = j.feedback_guru if j and j.feedback_guru else ''
         sanggahan_val = j.sanggahan_siswa if j and j.sanggahan_siswa else ''
         lampiran_view = f'<br><div style="margin-top:12px;"><i class="fas fa-paperclip"></i> <b>Lampiran Foto/File Siswa:</b><br><img src="{url_for("static", filename="uploads/" + j.lampiran_file)}" style="max-height:220px; border-radius:12px; margin-top:8px; border:1px solid #cbd5e1;"></div>' if j and j.lampiran_file else ''
@@ -1822,7 +1871,8 @@ def setup_ular_tangga():
     if request.method == 'POST':
         teams_raw = request.form.getlist('team_names')
         teams = [t.strip() for t in teams_raw if t.strip()]
-        if not teams: teams = ["Kelompok 1", "Kelompok 2"]
+        if not teams:
+            teams = ["Kelompok 1", "Kelompok 2"]
         session['ut_teams'] = teams
         return redirect(url_for('game_ular_tangga'))
         
@@ -1861,12 +1911,13 @@ def game_ular_tangga():
     kartus = KartuSoalUlarTangga.query.all()
     kartu_dict = {'hijau': [], 'biru': [], 'kuning': [], 'merah': []}
     for k in kartus:
-        kartu_dict[k.warna].append({
-            'tipe_soal': k.tipe_soal or 'angka',
-            'pertanyaan': k.pertanyaan, 
-            'jawaban': k.jawaban,
-            'keyword_jawaban': k.keyword_jawaban or ''
-        })
+        if k.warna in kartu_dict:
+            kartu_dict[k.warna].append({
+                'tipe_soal': k.tipe_soal or 'angka',
+                'pertanyaan': k.pertanyaan, 
+                'jawaban': k.jawaban,
+                'keyword_jawaban': k.keyword_jawaban or ''
+            })
     for w in kartu_dict:
         if not kartu_dict[w]: 
             kartu_dict[w].append({'tipe_soal': 'angka', 'pertanyaan': '1 + 1', 'jawaban': '2', 'keyword_jawaban': ''})
@@ -2183,7 +2234,7 @@ def game_ular_tangga():
 def mathvocab():
     if request.method == 'POST' and session.get('role') == 'admin':
         if request.form.get('action') == 'add':
-            db.session.add(VocabCategory(name=request.form.get('name')))
+            db.session.add(VocabCategory(name=request.form.get('name', '').strip()))
             flash('Kategori kamus berhasil ditambahkan!', 'success')
         db.session.commit()
         return redirect(url_for('mathvocab'))
@@ -2233,7 +2284,12 @@ def mathvocab_detail(cat_id):
     cat = VocabCategory.query.get_or_404(cat_id)
     if request.method == 'POST' and session.get('role') == 'admin':
         if request.form.get('action') == 'add':
-            db.session.add(Vocab(category_id=cat.id, term_en=request.form.get('term_en'), term_id=request.form.get('term_id'), definition=request.form.get('def')))
+            db.session.add(Vocab(
+                category_id=cat.id,
+                term_en=request.form.get('term_en', '').strip(),
+                term_id=request.form.get('term_id', '').strip(),
+                definition=request.form.get('def', '').strip()
+            ))
             db.session.commit()
             flash('Kosakata berhasil ditambahkan!', 'success')
         return redirect(url_for('mathvocab_detail', cat_id=cat.id))
@@ -2288,15 +2344,17 @@ def mathvocab_detail(cat_id):
 @login_required
 def pencapaian():
     riwayat = RiwayatPengerjaan.query.filter_by(user_id=session['user_id']).all()
+    materi_map = {m.id: m.judul for m in MateriSoal.query.all()}
     rows = "".join([f"""
     <tr>
-        <td><b>{MateriSoal.query.get(r.materi_id).judul}</b></td>
+        <td><b>{materi_map.get(r.materi_id, 'Materi Telah Dihapus')}</b></td>
         <td><span style="font-size:1.2rem; font-weight:800; color:#4f46e5;">{r.skor_tertinggi}</span></td>
         <td><span style="background:#e0e7ff; color:#4f46e5; padding:6px 14px; border-radius:20px; font-weight:700; font-size:0.85rem;">{r.status_ujian}</span></td>
         <td><span style="color:var(--text-muted); font-size:0.95rem;">{r.terakhir_dikerjakan.strftime('%d %b %Y, %H:%M') if r.terakhir_dikerjakan else '-'}</span></td>
     </tr>
     """ for r in riwayat])
-    if not rows: rows = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:40px; font-size:1.05rem;">Belum ada riwayat pengerjaan ujian.</td></tr>'
+    if not rows:
+        rows = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:40px; font-size:1.05rem;">Belum ada riwayat pengerjaan ujian.</td></tr>'
 
     content = f"""
     <div style="margin-bottom:32px;">
